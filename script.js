@@ -3,32 +3,39 @@ async function loadAndParsePGN() {
   const rawPGN = await response.text();
 
   const games = rawPGN.split(/\n\n(?=Event )/g); // Split PGNs
-  const opponents = {}; // { name: { rating, wins: Set, draws: Set } }
+  const opponents = {}; // { opponentName: { rating, wins: Set, draws: Set } }
 
   for (const gameText of games) {
     if (!gameText.trim()) continue;
 
-    const resultMatch = gameText.match(/Result "(.*?)"/);
-    const whiteMatch = gameText.match(/White "(.*?)"/);
-    const blackMatch = gameText.match(/Black "(.*?)"/);
-    const whiteEloMatch = gameText.match(/WhiteElo "(.*?)"/);
-    const blackEloMatch = gameText.match(/BlackElo "(.*?)"/);
+    // Extract basic PGN data
+    const headers = {};
+    for (const line of gameText.split("\n")) {
+      const match = line.match(/^(\w+)\s+"(.*)"$/);
+      if (match) headers[match[1]] = match[2];
+    }
 
-    const result = resultMatch?.[1] || '';
-    const white = whiteMatch?.[1] || '';
-    const black = blackMatch?.[1] || '';
-    const whiteElo = parseInt(whiteEloMatch?.[1]) || 0;
-    const blackElo = parseInt(blackEloMatch?.[1]) || 0;
+    const white = headers.White || '';
+    const black = headers.Black || '';
+    const whiteElo = parseInt(headers.WhiteElo || "0");
+    const blackElo = parseInt(headers.BlackElo || "0");
+    const result = headers.Result || '';
 
-    const self = (white.toLowerCase() === 'utsa') ? white : black;
-    const opponent = (self === white) ? black : white;
-    const opponentElo = (self === white) ? blackElo : whiteElo;
-    const isWin = (self === white && result === '1-0') || (self === black && result === '0-1');
-    const isDraw = result === '1/2-1/2';
+    // Determine winner
+    const winner = result === '1-0' ? white
+                : result === '0-1' ? black
+                : 'draw';
+
+    // We assume the winner is "you"
+    const opponent = winner === white ? black : winner === black ? white : 'draw';
+    const opponentElo = winner === white ? blackElo : winner === black ? whiteElo : Math.max(whiteElo, blackElo);
+
+    if (opponent === 'draw') continue; // We'll handle draw later
 
     const moveText = gameText.split(/\n\n/)[1] || '';
-    const hash = btoa(moveText).slice(0, 20);
+    const hash = btoa(moveText).slice(0, 20); // hash to deduplicate
 
+    // Initialize opponent entry
     if (!opponents[opponent]) {
       opponents[opponent] = { rating: opponentElo, wins: new Map(), draws: new Map() };
     }
@@ -36,10 +43,15 @@ async function loadAndParsePGN() {
       opponents[opponent].rating = opponentElo;
     }
 
-    if (isWin && !opponents[opponent].wins.has(hash)) {
-      opponents[opponent].wins.set(hash, gameText);
-    } else if (isDraw && !opponents[opponent].draws.has(hash)) {
-      opponents[opponent].draws.set(hash, gameText);
+    // Store win or draw
+    if (winner !== 'draw') {
+      if (!opponents[opponent].wins.has(hash)) {
+        opponents[opponent].wins.set(hash, gameText);
+      }
+    } else {
+      if (!opponents[opponent].draws.has(hash)) {
+        opponents[opponent].draws.set(hash, gameText);
+      }
     }
   }
 
@@ -59,14 +71,14 @@ function render(opponents) {
       section.innerHTML += `<h3>Wins</h3>`;
       for (const [_, pgn] of data.wins) {
         section.innerHTML += `
-          <div class="pgn-container">
-            <div class="pgn" id="board${boardId}">
+<div class="pgn-container">
+  <div class="pgn" id="board${boardId}">
 [Event "Racing Kings Game"]
 [SetUp "1"]
 [FEN "startpos"]
 ${pgn}
-            </div>
-          </div>`;
+  </div>
+</div>`;
         boardId++;
       }
     }
@@ -75,14 +87,14 @@ ${pgn}
       section.innerHTML += `<h3>Draws</h3>`;
       for (const [_, pgn] of data.draws) {
         section.innerHTML += `
-          <div class="pgn-container">
-            <div class="pgn" id="board${boardId}">
+<div class="pgn-container">
+  <div class="pgn" id="board${boardId}">
 [Event "Racing Kings Game"]
 [SetUp "1"]
 [FEN "startpos"]
 ${pgn}
-            </div>
-          </div>`;
+  </div>
+</div>`;
         boardId++;
       }
     }
